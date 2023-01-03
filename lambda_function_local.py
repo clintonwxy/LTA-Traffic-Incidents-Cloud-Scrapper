@@ -54,8 +54,24 @@ if (len(df) > 0):
     # Checking files
     if (len(df_tocloud) > 0):
 
-        print("The key is: " + df_tocloud_key)
-        print("The total incidents are: " + str(len(df_tocloud)))
+        message_key = "The key is: " + df_tocloud_key
+        message_incidents = "The total incidents are: " + str(len(df_tocloud))
+        print(message_key)
+        print(message_incidents)
+        
+        TELEGRAM_TOKEN = open("telegram_bot_token.txt").read()
+        TELEGRAM_CHAT_ID= open("telegram_chat_id.txt").read()
+        apiURL = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
+        
+        try:
+            response = requests.post(
+                apiURL, 
+                json={
+                    'chat_id': TELEGRAM_CHAT_ID, 
+                    'text': message_key + "\n" + message_incidents})
+            print(response.text)
+        except Exception as e:
+            print(e)
 
     else:
         print("There are no incidents in the past hour")
