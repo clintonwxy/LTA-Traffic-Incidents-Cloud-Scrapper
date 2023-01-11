@@ -47,7 +47,7 @@ def lambda_handler(event, context):
         df_tocloud = df[df['Date_Time'] > dt_last15].reset_index(drop = True)
 
         # Key for DynamoDB
-        df_tocloud_key = dt.strftime(format = "%Y-%m-%d %H:%m")
+        df_tocloud_key = dt.strftime(format = "%Y-%m-%d %H:%M")
 
         # Adding to DynamoDB
         if (len(df_tocloud) > 0):
