@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import datetime
 import boto3
+import json
 
 
 def lambda_handler(event, context):
@@ -19,67 +20,154 @@ def lambda_handler(event, context):
     api_headers = {"AccountKey": api_key, "accept": "application/json"}
 
     request = requests.get(url=traffic_url, headers=api_headers)
-    print(request)
     data = request.json()
-    dt = datetime.datetime.now() + datetime.timedelta(hours=8)
-    # Adding of timedelta only needed in AWS due to time difference, adjsuted to Singapore time
+    dt = datetime.datetime.now() + datetime.timedelta(hours=8) # Adjsuted to Singapore time
 
     df = pd.DataFrame(data["value"])
 
     if (len(df) > 0):
+        
+        print("Yup there are files found in the api")
 
-        # Extract Date and Time out of the Message and keep the main message only
+        # 1. Extract Date and Time out of the Message and keep the main message only
         date_regex = "([0-9]{1,2}/[0-9]{1,2})"
         df["Date"] = df["Message"].str.extract(pat = date_regex) + "/" + str(dt.year)
 
         time_regex = "([0-9]{1,2}:[0-9]{1,2})"
         df["Time"] = df["Message"].str.extract(pat = time_regex)
 
-        df["Date_Time"] = pd.to_datetime(df["Date"] + df["Time"], format = "%d/%m/%Y%H:%S")
+        df["Date_Time_Start"] = pd.to_datetime(df["Date"] + df["Time"], format = "%d/%m/%Y%H:%M").astype(str)
 
         message_regex = "\d\s(.*$)"
         df["Message"] = df["Message"].str.extract(pat = message_regex)
+        
+        df["Date_Time_End"] = "Nil"
 
-        df = df[["Type", "Date_Time", "Message", "Latitude", "Longitude"]]
+        df = df[["Type", "Date_Time_Start", "Date_Time_End", "Message", "Latitude", "Longitude"]]
 
-        # Filtering to keep only past 15 minutes of data
-        dt_last15 = dt-datetime.timedelta(minutes=15)
-        df_tocloud = df[df['Date_Time'] > dt_last15].reset_index(drop = True)
+        # 2. Extract temp file
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table('cloud_project')  # Name of my DynamoDB
 
-        # Key for DynamoDB
-        df_tocloud_key = dt.strftime(format = "%Y-%m-%d %H:%M")
+        temp = table.get_item(Key = {"date_time" : "temp"})
 
-        # Adding to DynamoDB
-        if (len(df_tocloud) > 0):
+        print("temp==========================")
+        print(temp)
+        print("df============================")
+        print(df)
+        print("==============================")
 
-            dynamodb = boto3.resource('dynamodb')
-            table = dynamodb.Table('cloud_project')  # Name of my DynamoDB
+        try:
 
-            send_to_dynamodb = {
-                "date_time": df_tocloud_key,
-                "value": df_tocloud.to_json()
+            print("trying to do the sorting out 21...")
+
+            temp = temp["Item"]["value"]
+            temp = pd.DataFrame(json.loads(temp))
+
+            df["key"] = df["Type"] + " " + df["Message"]
+            temp["key"] = temp["Type"] + " " + temp["Message"]
+
+            check_active = temp["key"].isin(df["key"])
+
+            temp = temp[~check_active] #Inverse to keep only those that are expired, i.e. incident is resolved and is not active
+            temp["Date_Time_End"] = dt.strftime(format = "%Y-%m-%d %H:%M:%S")
+            temp = temp[["Type", "Date_Time_Start", "Date_Time_End", "Message", "Latitude", "Longitude"]]
+            
+            # Key for Dynamo DB
+            df_tocloud_key_insert = dt.strftime(format = "%Y-%m-%d %H:%M")
+            df_tocloud_insert = temp
+
+            print("the key is: " + df_tocloud_key_insert)
+            print("inserted is:")
+            print(df_tocloud_insert)
+
+            send_to_dynamodb_insert = {
+                "date_time": df_tocloud_key_insert,
+                "value": df_tocloud_insert.to_json()
             }
 
-            table.put_item(Item=send_to_dynamodb)
+            table.put_item(Item=send_to_dynamodb_insert)
 
-            # Log Data
-            print("The key is: " + df_tocloud_key)
-            print("The total incidents are: " + str(len(df_tocloud)))
+            print("inserted new file successfully")
 
-            # Sending to Telegram Bot
-            TELEGRAM_TOKEN = open("telegram_bot_token.txt").read()
-            TELEGRAM_CHAT_ID= open("telegram_chat_id.txt").read()
-            apiURL = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
+            df_tocloud_key_temp = "temp"
+            df_tocloud_temp = df
+
+            print("the key is:" + df_tocloud_key_temp)
+            print("temp is: ")
+            print(df_tocloud_temp)
+
+            send_to_dynamodb_temp = {
+                "date_time": df_tocloud_key_temp,
+                "value": df_tocloud_temp.to_json()
+            }
+
+            table.put_item(Item=send_to_dynamodb_temp)
+
+            print("temp added successfully")
+
+        except:
+
+            print("No temp") #temp does not exist. Send df to DynamoDB as temp
+
+            # Key for DynamoDB
+            df_tocloud_key_temp = "temp"
+            df_tocloud_temp = df
+
+            if(len(df_tocloud_temp) > 0):
+
+                send_to_dynamodb_temp = {
+                    "date_time": df_tocloud_key_temp,
+                    "value": df_tocloud_temp.to_json()
+                }
+
+                table.put_item(Item=send_to_dynamodb_temp)
             
-            try:
-                response = requests.post(
-                    apiURL, 
-                    json={
-                        'chat_id': TELEGRAM_CHAT_ID, 
-                        'text': message_key + "\n" + message_incidents})
-                print(response.text)
-            except Exception as e:
-                print(e)
+            print("The key is: " + df_tocloud_key_temp)
+            print("The total incidents are: " + str(len(df_tocloud_temp)))
+            
+    else:
 
-        else:
-            print("There are no incidents in the past hour")
+        print("No data from API, starting to close all active temp files...")
+
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table('cloud_project')  # Name of my DynamoDB
+
+        temp = table.get_item(Key = {"date_time" : "temp"})
+
+        print("temp attempted to retrieve successfully")
+
+        try:
+            print("trying to check if there are temp info.....")
+            temp = temp["Item"]["value"]
+            temp = pd.DataFrame(json.loads(temp))
+
+            temp["Date_Time_End"] = dt.strftime(format = "%Y-%m-%d %H:%M:%S")
+            temp = temp[["Type", "Date_Time_Start", "Date_Time_End", "Message", "Latitude", "Longitude"]]
+            
+            print("parsed temp file successfully 23")
+
+            # Key for Dynamo DB
+            df_tocloud_key_insert = dt.strftime(format = "%Y-%m-%d %H:%M")
+            df_tocloud_insert = temp
+
+            print("The key is:" + df_tocloud_key_insert)
+            print("The closed file is:")
+            print(df_tocloud_insert)
+
+            send_to_dynamodb_insert = {
+                "date_time": df_tocloud_key_insert,
+                "value": df_tocloud_insert.to_json()
+            }
+
+            table.put_item(Item=send_to_dynamodb_insert)
+
+            print("successfully added to server 44")
+
+            table.delete_item(Key = {"date_time" : "temp"})
+
+            print("successfully deteleted temp from server 67")
+
+
+        except:
+            print("No data from API. No temp file")
