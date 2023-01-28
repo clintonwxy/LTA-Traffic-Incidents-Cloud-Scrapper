@@ -26,8 +26,6 @@ def lambda_handler(event, context):
     df = pd.DataFrame(data["value"])
 
     if (len(df) > 0):
-        
-        print("Yup there are files found in the api")
 
         # 1. Extract Date and Time out of the Message and keep the main message only
         date_regex = "([0-9]{1,2}/[0-9]{1,2})"
@@ -51,15 +49,7 @@ def lambda_handler(event, context):
 
         temp = table.get_item(Key = {"date_time" : "temp"})
 
-        print("temp==========================")
-        print(temp)
-        print("df============================")
-        print(df)
-        print("==============================")
-
         try:
-
-            print("trying to do the sorting out 21...")
 
             temp = temp["Item"]["value"]
             temp = pd.DataFrame(json.loads(temp))
@@ -81,14 +71,19 @@ def lambda_handler(event, context):
             print("inserted is:")
             print(df_tocloud_insert)
 
-            send_to_dynamodb_insert = {
-                "date_time": df_tocloud_key_insert,
-                "value": df_tocloud_insert.to_json()
-            }
+            if (len(df_tocloud_insert)>0):
 
-            table.put_item(Item=send_to_dynamodb_insert)
-
-            print("inserted new file successfully")
+                send_to_dynamodb_insert = {
+                    "date_time": df_tocloud_key_insert,
+                    "value": df_tocloud_insert.to_json()
+                }
+    
+                table.put_item(Item=send_to_dynamodb_insert)
+    
+                print("Inserted new file successfully.")
+            
+            else:
+                print("No new file inserted as no new closed incidents.")
 
             df_tocloud_key_temp = "temp"
             df_tocloud_temp = df
@@ -104,11 +99,11 @@ def lambda_handler(event, context):
 
             table.put_item(Item=send_to_dynamodb_temp)
 
-            print("temp added successfully")
+            print("Temp file added successfully.")
 
         except:
 
-            print("No temp") #temp does not exist. Send df to DynamoDB as temp
+            print("No temp file found.") #temp does not exist. Send df to DynamoDB as temp
 
             # Key for DynamoDB
             df_tocloud_key_temp = "temp"
@@ -128,24 +123,19 @@ def lambda_handler(event, context):
             
     else:
 
-        print("No data from API, starting to close all active temp files...")
+        print("No data returned from API, starting to close temp file.")
 
         dynamodb = boto3.resource('dynamodb')
         table = dynamodb.Table('cloud_project')  # Name of my DynamoDB
 
         temp = table.get_item(Key = {"date_time" : "temp"})
 
-        print("temp attempted to retrieve successfully")
-
         try:
-            print("trying to check if there are temp info.....")
             temp = temp["Item"]["value"]
             temp = pd.DataFrame(json.loads(temp))
 
             temp["Date_Time_End"] = dt.strftime(format = "%Y-%m-%d %H:%M:%S")
             temp = temp[["Type", "Date_Time_Start", "Date_Time_End", "Message", "Latitude", "Longitude"]]
-            
-            print("parsed temp file successfully 23")
 
             # Key for Dynamo DB
             df_tocloud_key_insert = dt.strftime(format = "%Y-%m-%d %H:%M")
@@ -162,12 +152,11 @@ def lambda_handler(event, context):
 
             table.put_item(Item=send_to_dynamodb_insert)
 
-            print("successfully added to server 44")
+            print("Inserted new file successfully.")
 
             table.delete_item(Key = {"date_time" : "temp"})
 
-            print("successfully deteleted temp from server 67")
-
+            print("Deleted temp file successfully.")
 
         except:
-            print("No data from API. No temp file")
+            print("No data from API. No temp file found.")
