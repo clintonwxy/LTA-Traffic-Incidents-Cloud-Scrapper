@@ -27,29 +27,24 @@ if (len(df) > 0):
 
     # Extract Date and Time out of the Message and keep the main message only
     date_regex = "([0-9]{1,2}/[0-9]{1,2})"
-    df["Date"] = df["Message"].str.extract(pat=date_regex) + "/" + str(dt.year)
+    df["Date"] = df["Message"].str.extract(pat = date_regex) + "/" + str(dt.year)
 
     time_regex = "([0-9]{1,2}:[0-9]{1,2})"
-    df["Time"] = df["Message"].str.extract(pat=time_regex)
+    df["Time"] = df["Message"].str.extract(pat = time_regex)
+
+    df["Date_Time"] = pd.to_datetime(df["Date"] + df["Time"], format = "%d/%m/%Y%H:%S")
 
     message_regex = "\d\s(.*$)"
-    df["Message"] = df["Message"].str.extract(pat=message_regex)
+    df["Message"] = df["Message"].str.extract(pat = message_regex)
 
-    # Filtering to keep only previous hour of data
-    if dt.hour >= 1:
-        prev_hour = str(dt.hour - 1)
-        df_boolean = df["Time"].str.match(pat=(prev_hour + ":"))
-    else:
-        prev_hour = "23"
-        df_boolean = df["Time"].str.match(pat="23:")
+    df = df[["Type", "Date_Time", "Message", "Latitude", "Longitude"]]
 
-    # Preparing Key and Value for Saving to DynamoDB
-    if (int(prev_hour) == 23):
-        df_tocloud_key = str(
-            dt.date() - datetime.timedelta(days=1)) + " " + prev_hour
-    else:
-        df_tocloud_key = str(dt.date()) + " " + prev_hour.zfill(2)
-    df_tocloud = df[df_boolean].reset_index(drop=True)
+    # Filtering to keep only past 15 minutes of data
+    dt_last15 = dt-datetime.timedelta(minutes=15)
+    df_tocloud = df[df['Date_Time'] > dt_last15].reset_index(drop = True)
+
+    # Key for DynamoDB
+    df_tocloud_key = dt.strftime(format = "%Y-%m-%d %H:%m")
 
     # Checking files
     if (len(df_tocloud) > 0):
